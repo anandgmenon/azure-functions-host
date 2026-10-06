@@ -167,6 +167,63 @@ namespace Microsoft.Azure.WebJobs.Script.Tests
         }
 
         /// <summary>
+        /// Managed non-Logic-App file storage retains its plaintext fallback without a key.
+        /// </summary>
+        [Fact]
+        public async Task ManagedNonLogicAppFiles_WithoutEncryptionKey_KeepsExistingBehavior()
+        {
+            var environment = CreateManagedFileEnvironment(encryptionKey: null);
+            environment[EnvironmentSettingNames.AppKind] = "functionapp";
+            using var variables = new TestScopedEnvironmentVariable(environment);
+            var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            try
+            {
+                using var manager = CreateFileSecretManager(directory);
+                var secrets = await manager.GetHostSecretsAsync();
+                using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "host.json")));
+                var master = document.RootElement.GetProperty("masterKey");
+                Assert.False(master.GetProperty("encrypted").GetBoolean());
+                Assert.Equal(secrets.MasterKey, master.GetProperty("value").GetString());
+            }
+            finally
+            {
+                if (Directory.Exists(directory))
+                {
+                    Directory.Delete(directory, recursive: true);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Managed non-Logic-App file storage retains the default provider with a key.
+        /// </summary>
+        [Fact]
+        public async Task ManagedNonLogicAppFiles_WithEncryptionKey_UsesExistingProvider()
+        {
+            var environment = CreateManagedFileEnvironment(Convert.ToHexString(RandomNumberGenerator.GetBytes(32)));
+            environment[EnvironmentSettingNames.AppKind] = "functionapp";
+            using var variables = new TestScopedEnvironmentVariable(environment);
+            var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            try
+            {
+                using var manager = CreateFileSecretManager(directory);
+                await manager.GetHostSecretsAsync();
+                using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "host.json")));
+                var master = document.RootElement.GetProperty("masterKey");
+                Assert.True(master.GetProperty("encrypted").GetBoolean());
+                var payload = WebEncoders.Base64UrlDecode(master.GetProperty("value").GetString());
+                Assert.NotEqual(Guid.Empty, new Guid(payload.AsSpan(4, 16)));
+            }
+            finally
+            {
+                if (Directory.Exists(directory))
+                {
+                    Directory.Delete(directory, recursive: true);
+                }
+            }
+        }
+
+        /// <summary>
         /// Unmanaged file storage keeps its existing plaintext fallback when no key is configured.
         /// </summary>
         [Fact]
@@ -229,6 +286,7 @@ namespace Microsoft.Azure.WebJobs.Script.Tests
             return new Dictionary<string, string>
             {
                 [EnvironmentSettingNames.ManagedEnvironment] = "true",
+                [EnvironmentSettingNames.AppKind] = "workflowApp",
                 [EnvironmentSettingNames.AzureWebJobsSecretStorageType] = "Files",
                 [EnvironmentSettingNames.ContainerName] = null,
                 [EnvironmentSettingNames.AzureWebsiteInstanceId] = null,
@@ -248,6 +306,7 @@ namespace Microsoft.Azure.WebJobs.Script.Tests
             var environment = new TestEnvironment();
             environment.SetEnvironmentVariable(EnvironmentSettingNames.AzureWebJobsSecretStorageType, storageType);
             environment.SetEnvironmentVariable(EnvironmentSettingNames.ManagedEnvironment, Environment.GetEnvironmentVariable(EnvironmentSettingNames.ManagedEnvironment));
+            environment.SetEnvironmentVariable(EnvironmentSettingNames.AppKind, Environment.GetEnvironmentVariable(EnvironmentSettingNames.AppKind));
             environment.SetEnvironmentVariable(EnvironmentSettingNames.AzureWebsiteHostName, "managed-files.example");
             environment.SetEnvironmentVariable(EnvironmentSettingNames.AzureWebsiteName, "managed-files");
             environment.SetEnvironmentVariable(EnvironmentSettingNames.AzureWebJobsSecretStorageKeyVaultUri, "https://isolated-vault.example");
